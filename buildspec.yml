@@ -1,0 +1,22 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      dotnet: 2.2
+    commands:
+      - pip install pre-commit
+  pre_build:
+    commands:
+      - pre-commit run --all-files
+  build:
+    commands:
+      - cd $CODEBUILD_SRC_DIR
+      - dotnet clean -p:Configuration=Release
+      - dotnet restore
+      - dotnet build
+  post_build:
+    commands:
+      - if [ $CODEBUILD_BUILD_SUCCEEDING = 1 ]; then echo Build completed on `date`; echo Starting deployment; else echo Build failed ignoring deployment; exit 1; fi
+artifacts:
+  files:
+    - '**/*'
