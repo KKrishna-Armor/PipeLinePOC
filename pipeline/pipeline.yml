@@ -7,6 +7,8 @@ Outputs:
     Value: !GetAtt Artifacts.Arn
   PipelineVersion:
     Value: !GetAtt CodePipeline.Version
+  BuildProjectArn:
+    Value: !GetAtt BuildProject.Arn
 
 Parameters:
   # *** This value must always be passed in when creating / updating stack
@@ -37,6 +39,10 @@ Parameters:
     Default: GITHUB_REPOSITORY_NAME
     AllowedPattern: "[A-Za-z0-9-]+"
 
+  GitHubRepoLink:
+    Type: String
+    Default: GITHUB_REPOSITORY_URL
+
   GitHubBranch:
     Type: String
     Default: BRANCH_NAME
@@ -48,6 +54,29 @@ Parameters:
     Default: CODE_PIPELINE_STACKNAME
     AllowedPattern: "[A-Za-z0-9-]+"
 
+  BuildSpecFilePath:
+    Description: >-
+      Relative BuildSpec file path for build stage. For more information, see https://docs.aws.amazon.com/codebuild/latest/userguide/build-spec-ref.html
+    Type: String
+    Default: 'buildspec.yml'
+
+  ComputeType:
+    AllowedValues:
+      - BUILD_GENERAL1_SMALL
+      - BUILD_GENERAL1_MEDIUM
+      - BUILD_GENERAL1_LARGE
+    Default: BUILD_GENERAL1_MEDIUM
+    Description: AWS CodeBuild project compute type.
+    Type: String
+
+  EnvironmentType:
+    AllowedValues:
+      - LINUX_CONTAINER
+      - WINDOWS_CONTAINER
+    Default: LINUX_CONTAINER
+    Description: Environment type used by AWS CodeBuild. See the documentation for details (https://docs.aws.amazon.com/codebuild/latest/userguide/create-project.html#create-project-cli).
+    Type: String
+
 Resources:
   Artifacts:
     Properties:
@@ -56,6 +85,7 @@ Resources:
           - ExpirationInDays: 30
             Status: Enabled
     Type: AWS::S3::Bucket
+
   ArtifactsPolicy:
     Type: 'AWS::S3::BucketPolicy'
     Properties:
@@ -73,6 +103,12 @@ Resources:
             Resource:
               !Sub '${Artifacts.Arn}/*'
 
+  BuildOutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
   PipelineArtifactsBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -81,7 +117,9 @@ Resources:
 
   CodePipeline:
     Type: AWS::CodePipeline::Pipeline
+    DependsOn: BuildProject
     Properties:
+      Name: !Ref ApplicationStackName
       ArtifactStore:
         Type: S3
         Location: !Ref PipelineArtifactsBucket
@@ -94,32 +132,16 @@ Resources:
           InputArtifacts: []
           ActionTypeId:
             Category: Source
-            Owner: ThirdParty
-            Version: 1
-            Provider: GitHub
-          OutputArtifacts:
-          - Name: SourceCode
-          Configuration:
-            Owner: !Ref GitHubOwner
-            Repo: !Ref GitHubRepo
-            Branch: !Ref GitHubBranch
-            PollForSourceChanges: false
-            OAuthToken: !Ref GitHubOAuthToken
-          RunOrder: 1
-      - Name: Build
-        Actions:
-        - Name: Build
-          ActionTypeId:
-            Category: Build
             Owner: AWS
-            Provider: CodeBuild
-            Version: "1"
+            Version: 1
+            Provider: S3
           Configuration:
-            ProjectName: !Ref ApplicationStackName
-          InputArtifacts:
-            - Name: SourceCode
+              S3Bucket: !Ref BuildOutputBucket
+              PollForSourceChanges: true
+              S3ObjectKey: 'Builds/BuildArtifact.zip'
           OutputArtifacts:
-            - Name: BuildArtifact
+          - Name: BuildOutput
+          RunOrder: 1
       - Name: Deploy
         Actions:
         - Name: CloudFormationDeploy
@@ -129,31 +151,94 @@ Resources:
             Provider: CloudFormation
             Version: '1'
           InputArtifacts:
-            - Name: SourceCode
+            - Name: BuildOutput
           Configuration:
             ActionMode: CREATE_UPDATE
             Capabilities: CAPABILITY_IAM
             RoleArn: !GetAtt CloudformationRole.Arn
             StackName: !Ref ApplicationStackName
             #TemplatePath: !Sub "SourceCode::application.yml"
-          RunOrder: 3
+          RunOrder: 2
 
-  # 'GithubWebhook' satisfies two requirements:
-  # -- Means that updates are pushed from GitHub, rather than AWS having to poll
-  # -- Means we can filter for required changes
-  GithubWebhook:
-    Type: 'AWS::CodePipeline::Webhook'
+  CodeBuildSourceCredential:
+    Type: AWS::CodeBuild::SourceCredential
     Properties:
-      Authentication: GITHUB_HMAC
-      AuthenticationConfiguration:
-        SecretToken: !Ref GitHubOAuthToken
-      RegisterWithThirdParty: 'true'
-      Filters:
-      - JsonPath: "$.ref"
-        MatchEquals: refs/heads/{Branch}
-      TargetPipeline: !Ref CodePipeline
-      TargetAction: Source
-      TargetPipelineVersion: !GetAtt CodePipeline.Version
+      AuthType: PERSONAL_ACCESS_TOKEN
+      ServerType: GITHUB
+      Token: !Ref GitHubOAuthToken
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    DependsOn: BuildOutputBucket
+    Properties:
+      Name: !Sub
+        - Build-${ApplicationStackName}
+        - { ApplicationStackName: !Ref ApplicationStackName }
+      ServiceRole: !GetAtt BuildProjectRole.Arn
+      Source:
+        Auth:
+          Resource: !Ref CodeBuildSourceCredential
+          Type: OAUTH
+        Type: GITHUB
+        BuildSpec: !Ref BuildSpecFilePath
+        Location: !Ref GitHubRepoLink
+      Artifacts:
+        Type: S3
+        Name: 'BuildArtifact.zip'
+        Packaging: ZIP
+        Location: !Ref BuildOutputBucket
+        Path: 'Builds'
+      BadgeEnabled: True
+      Environment:
+        ComputeType: !Ref ComputeType
+        Image: 'aws/codebuild/standard:2.0'
+        Type: !Ref EnvironmentType
+      Triggers:
+        Webhook: true
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED
+            - Type: BASE_REF
+              Pattern: ^refs/heads/master$
+              ExcludeMatchedPattern: false
+            - Type: ACTOR_ACCOUNT_ID
+              Pattern: 12345
+              ExcludeMatchedPattern: true
+          - - Type: EVENT
+              Pattern: PUSH
+            - Type: HEAD_REF
+              Pattern: ^refs/heads/.*
+            - Type: FILE_PATH
+              Pattern: READ_ME
+              ExcludeMatchedPattern: true
+
+  BuildProjectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: !Sub "Used in CodeBuild project. Created by CloudFormation ${AWS::StackId}"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: !Sub '${ApplicationStackName}-codebuild'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Resource: '*'
+                Action:
+                - 'logs:CreateLogGroup'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Path: /service-role/
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -170,7 +255,6 @@ Resources:
         - arn:aws:iam::aws:policy/AWSCodeCommitPowerUser
         - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
-
 
   CloudformationRole:
     Type: AWS::IAM::Role
