@@ -157,7 +157,7 @@ Resources:
             Capabilities: CAPABILITY_IAM
             RoleArn: !GetAtt CloudformationRole.Arn
             StackName: !Ref ApplicationStackName
-            #TemplatePath: !Sub "SourceCode::application.yml"
+            TemplatePath: !Sub "BuildOutput::outputtemplate.yml"
           RunOrder: 2
 
   CodeBuildSourceCredential:

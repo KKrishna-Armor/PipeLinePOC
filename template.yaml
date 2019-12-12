@@ -1,0 +1,56 @@
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Sample SAM Template for vulnerability scanning
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - tde
+      - dev
+      - stage
+      - prod
+  ReadLambdaTimeout:
+    Type: Number
+    Default: 60
+  WriteLambdaTimeout:
+    Type: Number
+    Default: 60
+  LambdaMemorySize:
+    Type: Number
+    Default: 256
+    MinValue: 128
+    MaxValue: 3008
+  SqsVisibilityTimeout:
+    Type: Number
+    Default: 70
+  SqsMessageRetentionPeriod:
+    Type: Number
+    Default: 1209600 # 14 days in seconds
+  SqsBatchSize:
+    Type: Number
+    Default: 10
+    MaxValue: 10
+  DeadLetterQueueRecieveCount:
+    Type: Number
+    Default: 1
+
+## Define Resources
+Resources:
+  CodepipelineLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./PipeLinePOCLambda/
+      Handler: PipeLinePOCLambda::Function.Function::FunctionHandler
+      Runtime: dotnetcore2.1
+      Environment:
+        Variables:
+          PARAM1: VALUE
+      Events:
+        Test:
+          Type: Api
+          Properties:
+            Path: /test
+            Method: get
