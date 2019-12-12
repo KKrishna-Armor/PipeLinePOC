@@ -251,10 +251,7 @@ Resources:
             Service: codepipeline.amazonaws.com
           Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AWSCodePipelineFullAccess
-        - arn:aws:iam::aws:policy/AWSCodeCommitPowerUser
-        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+       - arn:aws:iam::aws:policy/AdministratorAccess
 
   CloudformationRole:
     Type: AWS::IAM::Role
