@@ -11,6 +11,7 @@ phases:
       - dotnet clean -p:Configuration=Release
       - dotnet restore
       - dotnet build
+      - export BUCKET=git-bucket
       - aws cloudformation package --template-file template.yaml --s3-bucket $BUCKET --output-template-file outputtemplate.yml
   post_build:
     commands:
