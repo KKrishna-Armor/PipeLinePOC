@@ -5,9 +5,6 @@ phases:
       dotnet: 2.2
     commands:
       - pip install pre-commit
-  pre_build:
-    commands:
-      - pre-commit run --all-files
   build:
     commands:
       - cd $CODEBUILD_SRC_DIR
